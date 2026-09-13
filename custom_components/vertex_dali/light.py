@@ -21,6 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .config_schema import _slug
 from .const import CONF_WRITE_REGISTER, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,12 +46,16 @@ async def async_setup_entry(
 
     entities: list[LightEntity] = []
     for device in data["devices"]:
+        # via_device points at the device's OWN group (not the controller
+        # directly) so the group's device page lists its member luminaires,
+        # same mechanism a Zigbee/Z-Wave hub uses to list connected devices.
+        group_id = _slug(f"{device['room']}_{device['group']}")
         device_info = DeviceInfo(
             identifiers={(DOMAIN, device["device_id"])},
             name=f"{device['room']}/{device['name']}",
             manufacturer="Glamox / ES-SYSTEM",
             model="Vertex DALI-2 luminaire",
-            via_device=(DOMAIN, controller_name),
+            via_device=(DOMAIN, group_id),
         )
         entities.append(VertexLuminaireLight(coordinator, device, device_info))
 
@@ -112,9 +117,21 @@ class VertexLuminaireLight(CoordinatorEntity, RestoreEntity, LightEntity):
 
     @property
     def available(self) -> bool:
+        # The device's own status byte (offset +19) does NOT reliably track
+        # real communication health -- cross-checked against Vertex's own
+        # GeneralStatus.ERROR (via REST /logic/vertex/devicesdali): several
+        # devices report status=1 ("offline") here while GeneralStatus shows
+        # zero errors and the light is demonstrably on and responsive. A
+        # successful Modbus read (this device present in coordinator.data at
+        # all) is already sufficient evidence of availability; the status
+        # byte is exposed as a diagnostic attribute instead of gating on it.
         if not super().available:
             return False
-        return self._device_data().get("status") == "ok"
+        return self._device_id in (self.coordinator.data or {})
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"dali_status": self._device_data().get("status", "unknown")}
 
     async def async_turn_on(self, **kwargs) -> None:
         brightness = kwargs.get("brightness")
