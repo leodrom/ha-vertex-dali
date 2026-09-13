@@ -117,17 +117,15 @@ class VertexLuminaireLight(CoordinatorEntity, RestoreEntity, LightEntity):
 
     @property
     def available(self) -> bool:
-        # The device's own status byte (offset +19) does NOT reliably track
-        # real communication health -- cross-checked against Vertex's own
-        # GeneralStatus.ERROR (via REST /logic/vertex/devicesdali): several
-        # devices report status=1 ("offline") here while GeneralStatus shows
-        # zero errors and the light is demonstrably on and responsive. A
-        # successful Modbus read (this device present in coordinator.data at
-        # all) is already sufficient evidence of availability; the status
-        # byte is exposed as a diagnostic attribute instead of gating on it.
+        # Confirmed correct against Vertex's own native UI (Group management
+        # page's "Status" column shows the same "No communication" for the
+        # same devices) -- the status byte IS the real signal, not a false
+        # positive. (An earlier attempt to stop gating on this was wrong: it
+        # generalized from 2 devices whose GeneralStatus briefly disagreed
+        # with the Modbus byte, without cross-checking Vertex's own UI first.)
         if not super().available:
             return False
-        return self._device_id in (self.coordinator.data or {})
+        return self._device_data().get("status") == "ok"
 
     @property
     def extra_state_attributes(self) -> dict:
